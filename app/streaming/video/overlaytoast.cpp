@@ -1,6 +1,7 @@
 #include "overlaytoast.h"
 
 #include <QGuiApplication>
+#include <QFontDatabase>
 #include <QScreen>
 #include <QFontMetrics>
 #include <QPainterPath>
@@ -37,6 +38,27 @@ static int alignSizeToDevicePixels(int value, int step)
     return qCeil((qreal)value / step) * step;
 }
 
+static QFont makeToastFont()
+{
+    const QString family = qEnvironmentVariable("MOONLIGHT_TOAST_FONT");
+    if (!family.isEmpty()) {
+        QFont font(family, 10);
+        font.setWeight(QFont::Medium);
+        return font;
+    }
+
+    if (qEnvironmentVariableIsSet("MOONLIGHT_TOAST_FIXED_FONT")) {
+        QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+        font.setPointSize(10);
+        font.setWeight(QFont::Medium);
+        return font;
+    }
+
+    QFont font(QStringLiteral("Segoe UI"), 10);
+    font.setWeight(QFont::Medium);
+    return font;
+}
+
 OverlayToast::OverlayToast(QWindow* parent)
     : QRasterWindow(parent),
       m_FadeAnimation(nullptr),
@@ -52,8 +74,7 @@ OverlayToast::OverlayToast(QWindow* parent)
     fmt.setAlphaBufferSize(8);
     setFormat(fmt);
 
-    m_Font = QFont("Segoe UI", 10);
-    m_Font.setWeight(QFont::Medium);
+    m_Font = makeToastFont();
 
     m_DismissTimer.setSingleShot(true);
     connect(&m_DismissTimer, &QTimer::timeout, this, &OverlayToast::startFadeOut);
