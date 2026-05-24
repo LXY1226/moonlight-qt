@@ -1,8 +1,41 @@
 #include "overlaytoast.h"
 
+#include <QGuiApplication>
 #include <QScreen>
 #include <QFontMetrics>
 #include <QPainterPath>
+#include <QtMath>
+
+static int getDevicePixelAlignedStep(qreal dpr)
+{
+    if (dpr <= 1.0) {
+        return 1;
+    }
+
+    // Keep the transparent top-level window on whole physical pixels at common
+    // fractional scales, otherwise the compositor may resample the whole toast.
+    int scaledDpr = qRound(dpr * 100.0);
+    int a = qAbs(scaledDpr);
+    int b = 100;
+    while (b != 0) {
+        int r = a % b;
+        a = b;
+        b = r;
+    }
+
+    int step = 100 / qMax(a, 1);
+    return step <= 16 ? step : 1;
+}
+
+static int alignPositionToDevicePixels(int value, int step)
+{
+    return qRound((qreal)value / step) * step;
+}
+
+static int alignSizeToDevicePixels(int value, int step)
+{
+    return qCeil((qreal)value / step) * step;
+}
 
 OverlayToast::OverlayToast(QWindow* parent)
     : QRasterWindow(parent),
@@ -47,11 +80,20 @@ void OverlayToast::showToast(int parentX, int parentY, int parentW, int parentH,
     m_FadeAnimation->stop();
     setOpacity(1.0);
 
+    QScreen* targetScreen = screen();
+    if (targetScreen == nullptr) {
+        targetScreen = QGuiApplication::primaryScreen();
+    }
+    qreal dpr = targetScreen ? targetScreen->devicePixelRatio() : 1.0;
+    int devicePixelStep = getDevicePixelAlignedStep(dpr);
+
     // Calculate dimensions
-    QFontMetrics fm(m_Font);
-    int textWidth = fm.horizontalAdvance(m_Message) + m_HorizPadding * 2;
+    QFontMetricsF fm(m_Font);
+    int textWidth = qCeil(fm.horizontalAdvance(m_Message)) + m_HorizPadding * 2;
     int toastWidth = qMin(textWidth, 500);
     if (toastWidth < 120) toastWidth = 120;
+    toastWidth = alignSizeToDevicePixels(toastWidth, devicePixelStep);
+    int toastHeight = alignSizeToDevicePixels(m_ToastHeight, devicePixelStep);
 
 #ifdef Q_OS_MACOS
     // On macOS, SDL and Qt both use points (logical coordinates)
@@ -61,7 +103,6 @@ void OverlayToast::showToast(int parentX, int parentY, int parentW, int parentH,
     int qpH = parentH;
 #else
     // Convert SDL pixel coords to Qt DIP
-    qreal dpr = screen() ? screen()->devicePixelRatio() : 1.0;
     int qpX = qRound(parentX / dpr);
     int qpY = qRound(parentY / dpr);
     int qpW = qRound(parentW / dpr);
@@ -70,9 +111,12 @@ void OverlayToast::showToast(int parentX, int parentY, int parentW, int parentH,
 
     // Position at bottom-center, 60px above the bottom
     int x = qpX + (qpW - toastWidth) / 2;
-    int y = qpY + qpH - m_ToastHeight - 60;
+    int y = qpY + qpH - toastHeight - 60;
 
-    setGeometry(x, y, toastWidth, m_ToastHeight);
+    setGeometry(alignPositionToDevicePixels(x, devicePixelStep),
+                alignPositionToDevicePixels(y, devicePixelStep),
+                toastWidth,
+                toastHeight);
     show();
     raise();
     requestUpdate();
@@ -95,6 +139,7 @@ void OverlayToast::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
+    p.setRenderHint(QPainter::TextAntialiasing);
 
     int w = width();
     int h = height();
